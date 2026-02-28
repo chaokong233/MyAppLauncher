@@ -23,6 +23,8 @@ from PyQt5.QtWidgets import (
     QAbstractItemView,
     QAction,
     QApplication,
+    QDialog,
+    QDialogButtonBox,
     QFileIconProvider,
     QHBoxLayout,
     QInputDialog,
@@ -273,26 +275,68 @@ class MainWindow(QMainWindow):
         self.status_label.setStyleSheet("color:#555; font-size:12px;")
         root.addWidget(self.status_label)
 
-        # 分组标签页
+        # ── 分组管理工具栏 ──────────────────────────────────────────────────
+        group_bar_label = QLabel("📁  分组：")
+        group_bar_label.setFont(QFont("", 10, QFont.Bold))
+
+        self.new_group_btn = QPushButton("＋ 新建分组")
+        self.new_group_btn.setToolTip("新建一个应用分组")
+        self.new_group_btn.setFixedHeight(28)
+        self.new_group_btn.setStyleSheet(
+            "QPushButton{border:1px solid #90CAF9;border-radius:4px;"
+            "background:#E3F2FD;color:#1565C0;padding:0 10px;}"
+            "QPushButton:hover{background:#BBDEFB;}"
+        )
+        self.new_group_btn.clicked.connect(self._add_group)
+
+        self.rename_group_btn = QPushButton("✏ 重命名")
+        self.rename_group_btn.setToolTip("重命名当前选中的分组")
+        self.rename_group_btn.setFixedHeight(28)
+        self.rename_group_btn.setStyleSheet(
+            "QPushButton{border:1px solid #C8E6C9;border-radius:4px;"
+            "background:#F1F8E9;color:#2E7D32;padding:0 10px;}"
+            "QPushButton:hover{background:#DCEDC8;}"
+        )
+        self.rename_group_btn.clicked.connect(
+            lambda: self._rename_group(self.tab_widget.currentIndex())
+        )
+
+        self.del_group_btn = QPushButton("🗑 删除组")
+        self.del_group_btn.setToolTip("删除当前选中的分组（应用不会被删除）")
+        self.del_group_btn.setFixedHeight(28)
+        self.del_group_btn.setStyleSheet(
+            "QPushButton{border:1px solid #FFCDD2;border-radius:4px;"
+            "background:#FFEBEE;color:#C62828;padding:0 10px;}"
+            "QPushButton:hover{background:#FFCDD2;}"
+            "QPushButton:disabled{background:#F5F5F5;color:#BDBDBD;border-color:#E0E0E0;}"
+        )
+        self.del_group_btn.clicked.connect(
+            lambda: self._delete_group(self.tab_widget.currentIndex())
+        )
+
+        group_toolbar = QHBoxLayout()
+        group_toolbar.setSpacing(6)
+        group_toolbar.addWidget(group_bar_label)
+        group_toolbar.addWidget(self.new_group_btn)
+        group_toolbar.addWidget(self.rename_group_btn)
+        group_toolbar.addWidget(self.del_group_btn)
+        group_toolbar.addStretch()
+        root.addLayout(group_toolbar)
+
+        # 提示行
+        hint = QLabel(
+            "💡  点击下方标签切换分组 · 右键标签也可重命名或删除"
+        )
+        hint.setStyleSheet("color:#9E9E9E; font-size:11px;")
+        root.addWidget(hint)
+
+        # ── 分组标签页 ──────────────────────────────────────────────────────
         self.tab_widget = QTabWidget()
         self.tab_widget.setTabsClosable(False)
-
-        # 右键菜单绑定在 tabBar 上，pos 就是 tabBar 坐标
         tab_bar: QTabBar = self.tab_widget.tabBar()
         tab_bar.setContextMenuPolicy(Qt.CustomContextMenu)
         tab_bar.customContextMenuRequested.connect(self._tab_context_menu)
         self.tab_widget.currentChanged.connect(self._on_tab_changed)
-
-        # 标签栏右上角的"+"按钮
-        add_tab_btn = QPushButton("+")
-        add_tab_btn.setFixedSize(26, 26)
-        add_tab_btn.setToolTip("新建分组 (Ctrl+T)")
-        add_tab_btn.setStyleSheet(
-            "QPushButton { font-weight:bold; border:none; border-radius:4px; }"
-            "QPushButton:hover { background:#E0E0E0; }"
-        )
-        add_tab_btn.clicked.connect(self._add_group)
-        self.tab_widget.setCornerWidget(add_tab_btn, Qt.TopRightCorner)
         root.addWidget(self.tab_widget)
 
         # 底部按钮行
@@ -348,6 +392,43 @@ class MainWindow(QMainWindow):
         self.tab_widget.blockSignals(False)
 
     def _create_tab_for_group(self, group: dict) -> GroupAppList:
+        # Each tab is a container widget: [add-from-registry button] + [list]
+        container = QWidget()
+        vbox = QVBoxLayout(container)
+        vbox.setContentsMargins(0, 4, 0, 0)
+        vbox.setSpacing(4)
+
+        # "从已注册应用添加" button row
+        add_row = QHBoxLayout()
+        add_btn = QPushButton("＋  从已注册应用中添加到本组")
+        add_btn.setFixedHeight(28)
+        add_btn.setToolTip(
+            "从全局已注册应用中勾选要添加到本组的应用\n"
+            "（也可直接将文件拖放到上方注册区）"
+        )
+        add_btn.setStyleSheet(
+            "QPushButton{border:1px solid #B0BEC5;border-radius:4px;"
+            "background:#ECEFF1;color:#37474F;padding:0 10px;}"
+            "QPushButton:hover{background:#CFD8DC;}"
+        )
+        add_btn.clicked.connect(
+            lambda checked=False, gid=group["id"]: self._open_add_dialog(gid)
+        )
+        add_row.addWidget(add_btn)
+        add_row.addStretch()
+        vbox.addLayout(add_row)
+
+        # Empty-state placeholder (shown when list is empty)
+        placeholder = QLabel(
+            "📂  将应用文件拖放到上方注册区，或点击上方「添加」按钮从已注册应用中选取"
+        )
+        placeholder.setAlignment(Qt.AlignCenter)
+        placeholder.setStyleSheet(
+            "color:#BDBDBD; font-size:12px; padding:30px 10px;"
+        )
+        placeholder.setWordWrap(True)
+        vbox.addWidget(placeholder)
+
         lw = GroupAppList()
         lw.setProperty("group_id", group["id"])
         lw.populate(group["entries"], self.data["apps"])
@@ -361,8 +442,29 @@ class MainWindow(QMainWindow):
         lw.itemDoubleClicked.connect(
             lambda item: self._launch_single(item.data(Qt.UserRole)["path"])
         )
-        self.tab_widget.addTab(lw, group["name"])
+        vbox.addWidget(lw)
+
+        # Show placeholder only when list is empty
+        placeholder.setVisible(lw.count() == 0)
+        lw.model().rowsInserted.connect(
+            lambda *_: placeholder.setVisible(lw.count() == 0)
+        )
+        lw.model().rowsRemoved.connect(
+            lambda *_: placeholder.setVisible(lw.count() == 0)
+        )
+
+        self.tab_widget.addTab(container, group["name"])
         return lw
+
+    def _get_list_at(self, tab_idx: int) -> GroupAppList | None:
+        """Return the GroupAppList widget at the given tab index."""
+        w = self.tab_widget.widget(tab_idx)
+        if isinstance(w, GroupAppList):
+            return w
+        if isinstance(w, QWidget):
+            children = w.findChildren(GroupAppList)
+            return children[0] if children else None
+        return None
 
     def _restore_active_group(self):
         active_id = self.data.get("active_group_id", "")
@@ -381,11 +483,17 @@ class MainWindow(QMainWindow):
         return None
 
     def _current_list(self) -> GroupAppList | None:
-        w = self.tab_widget.currentWidget()
-        return w if isinstance(w, GroupAppList) else None
+        return self._get_list_at(self.tab_widget.currentIndex())
 
     def _update_status(self):
         group = self._current_group()
+        only_one = len(self.data["groups"]) <= 1
+        self.del_group_btn.setEnabled(not only_one)
+        self.del_group_btn.setToolTip(
+            "删除当前分组（应用不会被删除）"
+            if not only_one
+            else "至少保留一个分组，无法删除"
+        )
         if not group:
             self.status_label.setText("")
             self.launch_group_btn.setEnabled(False)
@@ -579,8 +687,8 @@ class MainWindow(QMainWindow):
             save_data(self.data)
             # 刷新所有标签页（改名影响所有组）
             for i, g in enumerate(self.data["groups"]):
-                lw = self.tab_widget.widget(i)
-                if isinstance(lw, GroupAppList):
+                lw = self._get_list_at(i)
+                if lw:
                     lw.populate(g["entries"], self.data["apps"])
 
     def _add_to_group(self, path: str, target_group: dict):
@@ -588,8 +696,8 @@ class MainWindow(QMainWindow):
         save_data(self.data)
         for i, g in enumerate(self.data["groups"]):
             if g["id"] == target_group["id"]:
-                lw = self.tab_widget.widget(i)
-                if isinstance(lw, GroupAppList):
+                lw = self._get_list_at(i)
+                if lw:
                     lw.populate(g["entries"], self.data["apps"])
                 break
         self.status_label.setText(f'✅  已添加到分组 "{target_group["name"]}"')
@@ -604,13 +712,117 @@ class MainWindow(QMainWindow):
         self._update_status()
         self.status_label.setText(f'已从当前组移除 "{name}"')
 
+    def _open_add_dialog(self, group_id: str):
+        """打开对话框，从全局注册表中勾选应用添加到指定分组。"""
+        # Find the target group
+        target_group = next(
+            (g for g in self.data["groups"] if g["id"] == group_id), None
+        )
+        if target_group is None:
+            return
+
+        already = {e["path"] for e in target_group["entries"]}
+        candidates = [
+            info
+            for path, info in self.data["apps"].items()
+            if path not in already
+        ]
+
+        if not candidates:
+            QMessageBox.information(
+                self,
+                "没有可添加的应用",
+                "全局注册表中的应用已全部在本组中。\n\n"
+                "请先将新的应用文件拖放到上方注册区以注册。",
+            )
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f'向分组 "{target_group["name"]}" 添加应用')
+        dlg.setMinimumSize(380, 380)
+        dlg_layout = QVBoxLayout(dlg)
+
+        hint_lbl = QLabel("勾选要添加到本组的应用（可多选）：")
+        hint_lbl.setStyleSheet("font-size:12px;")
+        dlg_layout.addWidget(hint_lbl)
+
+        lst = QListWidget()
+        lst.setIconSize(QSize(24, 24))
+        lst.setSpacing(2)
+        for info in candidates:
+            path = info.get("path", "")
+            name = info.get("name") or Path(path).stem
+            item = QListWidgetItem(name)
+            item.setData(Qt.UserRole, path)
+            item.setToolTip(path)
+            item.setCheckState(Qt.Unchecked)
+            if Path(path).exists():
+                item.setIcon(get_file_icon(path))
+            lst.addItem(item)
+        dlg_layout.addWidget(lst)
+
+        # Select-all / deselect-all row
+        sel_row = QHBoxLayout()
+        sel_all_btn = QPushButton("全选")
+        sel_all_btn.setFixedHeight(24)
+
+        def _select_all():
+            for i in range(lst.count()):
+                lst.item(i).setCheckState(Qt.Checked)
+
+        def _deselect_all():
+            for i in range(lst.count()):
+                lst.item(i).setCheckState(Qt.Unchecked)
+
+        sel_all_btn.clicked.connect(_select_all)
+        desel_btn = QPushButton("取消全选")
+        desel_btn.setFixedHeight(24)
+        desel_btn.clicked.connect(_deselect_all)
+        sel_row.addWidget(sel_all_btn)
+        sel_row.addWidget(desel_btn)
+        sel_row.addStretch()
+        dlg_layout.addLayout(sel_row)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+        )
+        buttons.button(QDialogButtonBox.Ok).setText("添加所选")
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        dlg_layout.addWidget(buttons)
+
+        if dlg.exec_() != QDialog.Accepted:
+            return
+
+        added = 0
+        for i in range(lst.count()):
+            item = lst.item(i)
+            if item.checkState() == Qt.Checked:
+                path = item.data(Qt.UserRole)
+                target_group["entries"].append({"path": path, "enabled": True})
+                added += 1
+
+        if added:
+            save_data(self.data)
+            # Refresh the target group's list widget
+            for idx, g in enumerate(self.data["groups"]):
+                if g["id"] == group_id:
+                    lw = self._get_list_at(idx)
+                    if lw:
+                        lw.populate(g["entries"], self.data["apps"])
+                    break
+            self._update_status()
+            self.status_label.setText(
+                f'✅  已向分组 "{target_group["name"]}" 添加 {added} 个应用'
+            )
+
     # ======================================================== ORDER ==
 
     def _on_order_changed(self, group_id: str):
         for i, g in enumerate(self.data["groups"]):
             if g["id"] == group_id:
-                lw = self.tab_widget.widget(i)
-                if isinstance(lw, GroupAppList):
+                lw = self._get_list_at(i)
+                if lw:
                     g["entries"] = lw.current_entries()
                 break
         save_data(self.data)
