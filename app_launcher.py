@@ -18,7 +18,7 @@ import uuid
 from pathlib import Path
 
 from PyQt5.QtCore import QFileInfo, QSize, Qt, pyqtSignal
-from PyQt5.QtGui import QColor, QFont
+from PyQt5.QtGui import QColor, QFont, QPainter
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QAction,
@@ -60,7 +60,10 @@ SUPPORTED_EXTENSIONS: frozenset = frozenset(
 
 DEFAULT_GROUP_NAME = "默认"
 
-_icon_provider = QFileIconProvider()
+# Lazy-initialized after QApplication is created; creating QFileIconProvider
+# before QApplication leaves the Windows Shell COM binding uninitialized,
+# causing icon() to silently return null icons for the entire session.
+_icon_provider: "QFileIconProvider | None" = None
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +115,14 @@ def save_data(data: dict) -> None:
 
 
 def get_file_icon(path: str):
-    """利用 Qt 的文件图标提供器获取文件的原生图标。"""
+    """利用 Qt 的文件图标提供器获取文件的原生图标。
+
+    延迟初始化 _icon_provider，确保其在 QApplication 创建之后才被实例化；
+    否则 Windows Shell COM 绑定未就绪，icon() 会静默返回空图标。
+    """
+    global _icon_provider
+    if _icon_provider is None:
+        _icon_provider = QFileIconProvider()
     return _icon_provider.icon(QFileInfo(path))
 
 
@@ -195,6 +205,11 @@ class GroupAppList(QListWidget):
 
     orderChanged = pyqtSignal()
 
+    _EMPTY_HINT = (
+        "📂  将应用文件拖放到上方注册区\n"
+        "或点击上方「添加」按钮从已注册应用中选取"
+    )
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setDragDropMode(QAbstractItemView.InternalMove)
@@ -202,6 +217,21 @@ class GroupAppList(QListWidget):
         self.setIconSize(QSize(32, 32))
         self.setSpacing(2)
         self.model().rowsMoved.connect(self.orderChanged)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self.count() == 0:
+            painter = QPainter(self.viewport())
+            try:
+                painter.setPen(QColor("#BDBDBD"))
+                painter.setFont(QFont("", 11))
+                painter.drawText(
+                    self.viewport().rect(),
+                    Qt.AlignCenter | Qt.TextWordWrap,
+                    self._EMPTY_HINT,
+                )
+            finally:
+                painter.end()
 
     def populate(self, entries: list, apps_registry: dict) -> None:
         """根据 entries 与全局注册表重新渲染列表。"""
@@ -418,17 +448,6 @@ class MainWindow(QMainWindow):
         add_row.addStretch()
         vbox.addLayout(add_row)
 
-        # Empty-state placeholder (shown when list is empty)
-        placeholder = QLabel(
-            "📂  将应用文件拖放到上方注册区，或点击上方「添加」按钮从已注册应用中选取"
-        )
-        placeholder.setAlignment(Qt.AlignCenter)
-        placeholder.setStyleSheet(
-            "color:#BDBDBD; font-size:12px; padding:30px 10px;"
-        )
-        placeholder.setWordWrap(True)
-        vbox.addWidget(placeholder)
-
         lw = GroupAppList()
         lw.setProperty("group_id", group["id"])
         lw.populate(group["entries"], self.data["apps"])
@@ -443,15 +462,6 @@ class MainWindow(QMainWindow):
             lambda item: self._launch_single(item.data(Qt.UserRole)["path"])
         )
         vbox.addWidget(lw)
-
-        # Show placeholder only when list is empty
-        placeholder.setVisible(lw.count() == 0)
-        lw.model().rowsInserted.connect(
-            lambda *_: placeholder.setVisible(lw.count() == 0)
-        )
-        lw.model().rowsRemoved.connect(
-            lambda *_: placeholder.setVisible(lw.count() == 0)
-        )
 
         self.tab_widget.addTab(container, group["name"])
         return lw
@@ -603,7 +613,7 @@ class MainWindow(QMainWindow):
         if added:
             save_data(self.data)
             lw = self._current_list()
-            if lw:
+            if lw is not None:
                 lw.populate(group["entries"], self.data["apps"])
             self._update_status()
             self.status_label.setText(f"✅  已向当前组添加 {added} 个应用")
@@ -688,7 +698,7 @@ class MainWindow(QMainWindow):
             # 刷新所有标签页（改名影响所有组）
             for i, g in enumerate(self.data["groups"]):
                 lw = self._get_list_at(i)
-                if lw:
+                if lw is not None:
                     lw.populate(g["entries"], self.data["apps"])
 
     def _add_to_group(self, path: str, target_group: dict):
@@ -697,7 +707,7 @@ class MainWindow(QMainWindow):
         for i, g in enumerate(self.data["groups"]):
             if g["id"] == target_group["id"]:
                 lw = self._get_list_at(i)
-                if lw:
+                if lw is not None:
                     lw.populate(g["entries"], self.data["apps"])
                 break
         self.status_label.setText(f'✅  已添加到分组 "{target_group["name"]}"')
@@ -808,7 +818,7 @@ class MainWindow(QMainWindow):
             for idx, g in enumerate(self.data["groups"]):
                 if g["id"] == group_id:
                     lw = self._get_list_at(idx)
-                    if lw:
+                    if lw is not None:
                         lw.populate(g["entries"], self.data["apps"])
                     break
             self._update_status()
@@ -822,7 +832,7 @@ class MainWindow(QMainWindow):
         for i, g in enumerate(self.data["groups"]):
             if g["id"] == group_id:
                 lw = self._get_list_at(i)
-                if lw:
+                if lw is not None:
                     g["entries"] = lw.current_entries()
                 break
         save_data(self.data)
