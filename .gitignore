@@ -24,6 +24,8 @@ mono_crash.*
 [Rr]eleases/
 x64/
 x86/
+build/
+dist/
 [Ww][Ii][Nn]32/
 [Aa][Rr][Mm]/
 [Aa][Rr][Mm]64/
@@ -416,3 +418,7 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# MyAppLauncher runtime data
+apps_data.json
+screenshot.png
